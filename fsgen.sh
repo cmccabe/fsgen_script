@@ -119,7 +119,7 @@ load_fsgen_nn() {
     try_verbose hdfs oiv -p ReverseXML -i "${FSIMAGE_XML}" -o "${FSIMAGE_BIN}"
     try_verbose rsync -avi --delete "$FSGEN_DIR/name/" "/dfs/nn"
     echo "** Created new fsimage directory"
-    ls -lh /dfs/nn
+    find /dfs/nn/current -xdev -noleaf -type f -exec ls -lh {} \;
 }
 
 main() {
