@@ -29,6 +29,7 @@ NameNode machine in the cluster.
 
 Environment variables:
 DATANODES        A whitespace-separated list of datanode hostnames.
+STORAGE_DIRS     A whitespace-separated list of datanode storage directories.
 SSH_USER         The username to use for ssh (leave unset for no username)
 SSH_PASS         The password to use for ssh (leave unset for no password)
 
@@ -41,10 +42,14 @@ check             Run some self-tests.  In particular, check that we can ssh to
 format_dn         Format the datanode storage directories, under /dfs/dnXX.
                   Clear all existing data.
 
-load_fsgen_nn     Load an fsimage prepared by the fsgen program.
-                  The directory containing the image should be the first
-                  argument.
+load_fsgen_nn     Load an fsimage prepared by the fsgen program into the
+                  namenode's storage directory.  The directory containing the
+                  fsgen output should be the first argument.  It's assumed that
+                  you only have one storage directory.
 
+load_fsgen_dn     Load an fsimage prepared by the fsgen program into the
+                  datanodes' storage directories.  The directory containing the
+                  fsgen output should be the first argument.
 EOF
 exit 0
 }
@@ -72,6 +77,8 @@ check_tool_installed() {
 verify_environment() {
     [ "x${DATANODES}" == "x" ] && \
         die "You must set DATANODES to a whitespace-separated list of datanode hostnames."
+    [ "x${STORAGE_DIRS}" == "x" ] && \
+        die "You must set STORAGE_DIRS to a whitespace-separated list of datanode hostnames."
     if [ "x$SSH_PASS" != "x" ]; then
         # If we need to specify an ssh password on the command-line, we need
         # the sshpass tool to do that.  Production systems should use
@@ -95,6 +102,22 @@ ssh_to_node() {
     fi
 }
 
+rsync_to_node() {
+    SRC=${1}
+    TGT=${2}
+    shift
+    shift
+    RSYNC_ARGS="-avi --delete"
+    if [ "x${SSH_USER}" != "x" ]; then
+        TGT="${SSH_USER}@${TGT}"
+    fi
+    if [ "x${SSH_PASS}" == "x" ]; then
+        rsync ${RSYNC_ARGS} "${SRC}" "${TGT}"
+    else
+        sshpass -p "${SSH_PASS}" rsync ${RSYNC_ARGS} -e ssh "${SRC}" "${TGT}"
+    fi
+}
+
 check() {
     for datanode in ${DATANODES}; do
         ssh_to_node ${datanode} hostname
@@ -103,23 +126,38 @@ check() {
 
 format_dn() {
     for d in ${DATANODES}; do
-        ssh_to_node "${d}" \
-'for i in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20; do rm -rf /dfs/dn$i; mkdir -p /dfs/dn$i; chown hdfs /dfs/dn$i; done'
+        ssh_to_node "${d}" "for s in ${STORAGE_DIRS}; do rm -rf \$s && mkdir -p \$s && chown hdfs \$s; done"
     done
 }
 
 load_fsgen_nn() {
     FSGEN_DIR="${1}"
     shift
-    [[ "x$FSGEN_DIR" == "x" ]] && die "load_fsgen_nn: you must specify the fsgen directory to use."
+    [[ "x${FSGEN_DIR}" == "x" ]] && die "load_fsgen_nn: you must specify the fsgen directory to use."
     FSIMAGE_XML="${FSGEN_DIR}/fsimage_0000000000000000001.xml"
     [ -f "${FSIMAGE_XML}" ] || \
         die "failed to find fsimage XML file at ${FSIMAGE_XML}"
     FSIMAGE_BIN="${FSGEN_DIR}/name/current/fsimage_0000000000000000001"
     try_verbose hdfs oiv -p ReverseXML -i "${FSIMAGE_XML}" -o "${FSIMAGE_BIN}"
-    try_verbose rsync -avi --delete "$FSGEN_DIR/name/" "/dfs/nn"
+    try_verbose rsync -avi --delete "${FSGEN_DIR}/name/" "/dfs/nn"
     echo "** Created new fsimage directory"
     find /dfs/nn/current -xdev -noleaf -type f -exec ls -lh {} \;
+}
+
+load_fsgen_dn() {
+    FSGEN_DIR="${1}"
+    shift
+    [[ "x$FSGEN_DIR" == "x" ]] && die "load_fsgen_dn: you must specify the fsgen directory to use."
+    DATANODE_IDX=1
+    for DATANODE in ${DATANODES}; do
+        DIDX=$(printf %02d ${DATANODE_IDX})
+        STORAGE_IDX=1
+        for STORAGE_DIR in ${STORAGE_DIRS}; do
+            SIDX=$(printf %02d ${STORAGE_IDX})
+            rsync_to_node "${FSGEN_DIR}/datanode${DIDX}/storage${SIDX}/" "${DATANODE}:${STORAGE_DIR}"
+            STORAGE_IDX=$((STORAGE_IDX+1))
+        done
+    done
 }
 
 main() {
@@ -137,6 +175,7 @@ main() {
         check) check;;
         format_dn) format_dn;;
         load_fsgen_nn) load_fsgen_nn "${@}";;
+        load_fsgen_dn) load_fsgen_dn "${@}";;
         *) die "Can't understand action ${ACTION}... type -h for help."
     esac
 }
