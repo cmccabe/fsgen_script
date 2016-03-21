@@ -126,7 +126,7 @@ check() {
 
 format_dn() {
     for d in ${DATANODES}; do
-        ssh_to_node "${d}" "for s in ${STORAGE_DIRS}; do rm -rf \$s && mkdir -p \$s && chown hdfs \$s; done"
+        try_verbose ssh_to_node "${d}" "for s in ${STORAGE_DIRS}; do rm -rf \$s && mkdir -p \$s; done"
     done
 }
 
@@ -140,6 +140,7 @@ load_fsgen_nn() {
     FSIMAGE_BIN="${FSGEN_DIR}/name/current/fsimage_0000000000000000001"
     try_verbose hdfs oiv -p ReverseXML -i "${FSIMAGE_XML}" -o "${FSIMAGE_BIN}"
     try_verbose rsync -avi --delete "${FSGEN_DIR}/name/" "/dfs/nn"
+    try chown -R hdfs "/dfs/nn"
     echo "** Created new fsimage directory"
     find /dfs/nn/current -xdev -noleaf -type f -exec ls -lh {} \;
 }
@@ -155,6 +156,7 @@ load_fsgen_dn() {
         for STORAGE_DIR in ${STORAGE_DIRS}; do
             SIDX=$(printf %02d ${STORAGE_IDX})
             rsync_to_node "${FSGEN_DIR}/datanode${DIDX}/storage${SIDX}/" "${DATANODE}:${STORAGE_DIR}"
+            try_verbose ssh_to_node "${DATANODE}" chown -R hdfs "${STORAGE_DIR}"
             STORAGE_IDX=$((STORAGE_IDX+1))
         done
     done
