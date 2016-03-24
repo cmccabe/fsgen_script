@@ -107,7 +107,7 @@ rsync_to_node() {
     TGT=${2}
     shift
     shift
-    RSYNC_ARGS="-avi --delete"
+    RSYNC_ARGS="-avq --delete"
     if [ "x${SSH_USER}" != "x" ]; then
         TGT="${SSH_USER}@${TGT}"
     fi
