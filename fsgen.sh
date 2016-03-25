@@ -50,6 +50,10 @@ load_fsgen_nn     Load an fsimage prepared by the fsgen program into the
 load_fsgen_dn     Load an fsimage prepared by the fsgen program into the
                   datanodes' storage directories.  The directory containing the
                   fsgen output should be the first argument.
+
+load_fsgen_dns    Load all fsimage datanodes.
+
+load_fsgen_dns_par Load all fsimage datanodes in parallel.
 EOF
 exit 0
 }
@@ -147,19 +151,45 @@ load_fsgen_nn() {
 
 load_fsgen_dn() {
     FSGEN_DIR="${1}"
+    TARGET_DATANODE=$(echo "${2}") # trim spaces
+    shift
+    shift
+    [[ "x$FSGEN_DIR" == "x" ]] && die "load_fsgen_dn: you must specify the fsgen directory to use."
+    [[ "x${TARGET_DATANODE}" == "x" ]] && die "You must supply a target datanode"
+    DATANODE_IDX=1
+    for DATANODE in ${DATANODES}; do
+        if [[ "${DATANODE}" == "${TARGET_DATANODE}" ]]; then
+            break;
+        fi
+        DATANODE_IDX=$((DATANODE_IDX+1))
+        DATANODE=""
+    done
+    [[ "x${DATANODE}" == "x" ]] && die "no such datanode as '${TARGET_DATANODE}' configured in \$DATANODES"
+    DIDX=$(printf %02d ${DATANODE_IDX})
+    STORAGE_IDX=1
+    for STORAGE_DIR in ${STORAGE_DIRS}; do
+        SIDX=$(printf %02d ${STORAGE_IDX})
+        rsync_to_node "${FSGEN_DIR}/datanode${DIDX}/storage${SIDX}/" "${DATANODE}:${STORAGE_DIR}"
+        try_verbose ssh_to_node "${DATANODE}" chown -R hdfs "${STORAGE_DIR}"
+        STORAGE_IDX=$((STORAGE_IDX+1))
+    done
+}
+
+load_fsgen_dns() {
+    FSGEN_DIR="${1}"
     shift
     [[ "x$FSGEN_DIR" == "x" ]] && die "load_fsgen_dn: you must specify the fsgen directory to use."
     DATANODE_IDX=1
     for DATANODE in ${DATANODES}; do
-        DIDX=$(printf %02d ${DATANODE_IDX})
-        STORAGE_IDX=1
-        for STORAGE_DIR in ${STORAGE_DIRS}; do
-            SIDX=$(printf %02d ${STORAGE_IDX})
-            rsync_to_node "${FSGEN_DIR}/datanode${DIDX}/storage${SIDX}/" "${DATANODE}:${STORAGE_DIR}"
-            try_verbose ssh_to_node "${DATANODE}" chown -R hdfs "${STORAGE_DIR}"
-            STORAGE_IDX=$((STORAGE_IDX+1))
-        done
+        load_fsgen_dn "${FSGEN_DIR}" "${DATANODE}"
     done
+}
+
+load_fsgen_dns_par() {
+    FSGEN_DIR="${1}"
+    shift
+    echo ${DATANODES} |
+      xargs -d ' ' --replace --max-procs=5 "${BASH_SOURCE}" load_fsgen_dn "${FSGEN_DIR}" "{}"
 }
 
 main() {
@@ -178,6 +208,8 @@ main() {
         format_dn) format_dn;;
         load_fsgen_nn) load_fsgen_nn "${@}";;
         load_fsgen_dn) load_fsgen_dn "${@}";;
+        load_fsgen_dns) load_fsgen_dns "${@}";;
+        load_fsgen_dns_par) load_fsgen_dns_par "${@}";;
         *) die "Can't understand action ${ACTION}... type -h for help."
     esac
 }
